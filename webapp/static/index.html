@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Book scanner</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/">Book scanner</a>
+  <nav class="sections" aria-label="Sections">
+    <a href="#/" data-section="scan">Scan a video</a>
+    <a href="#/results" data-section="results">Earlier results</a>
+  </nav>
+  <a class="job-chip" id="job-chip" href="#/scan" hidden></a>
+</header>
+
+<main id="main" tabindex="-1">
+  <p class="quiet">Loading…</p>
+</main>
+
+<dialog id="viewer" class="viewer" aria-label="Full-size picture">
+  <div class="viewer-bar">
+    <p class="viewer-where" id="viewer-where"></p>
+    <a class="viewer-open" id="viewer-open" target="_blank" rel="noopener">Open in a new tab</a>
+    <button type="button" class="plain" id="viewer-close">Close</button>
+  </div>
+  <div class="viewer-stage" id="viewer-stage">
+    <img id="viewer-image" alt="">
+  </div>
+  <div class="viewer-bar viewer-steps">
+    <button type="button" class="plain" id="viewer-previous">‹ Previous</button>
+    <p class="viewer-hint">Click the picture to zoom in or out</p>
+    <button type="button" class="plain" id="viewer-next">Next ›</button>
+  </div>
+</dialog>
+
+<noscript><p class="quiet">This page needs JavaScript switched on.</p></noscript>
+</body>
+</html>

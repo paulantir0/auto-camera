@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.vercel/
+# Fixtures made from real videos stay on the machine that made them.
+test/fixtures/real/
+# End-to-end runs write their output here.
+e2e-out/
+test-out/
+hand-models/
+tess-lang/

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Turn a video of a book being paged through into one clear picture per two-page spread. Runs in your browser; the video never leaves your device.">
+  <title>Book Scanner</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <span class="brand"><img src="icon.svg" alt="" width="24" height="24"> Book Scanner</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section id="start" class="panel">
+      <h1>Turn a video of a book into pictures of its pages</h1>
+      <p class="lead">Film the book while you turn the pages. Choose the video here, and this page picks one clear picture of every two-page spread, in order.</p>
+      <p class="privacy">
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z"/></svg>
+        <span><strong>Your video stays on this device.</strong> Nothing is uploaded; all the work happens inside this browser.</span>
+      </p>
+      <div id="drop" class="drop">
+        <label class="button primary big">
+          Choose a video
+          <input id="file" type="file" accept="video/*,.mov,.m4v,.mp4" hidden>
+        </label>
+        <p class="hint">or drop a video file here</p>
+      </div>
+      <p id="support" class="note" hidden></p>
+      <ul class="notes">
+        <li>Best in Safari on an iPhone, iPad or Mac, or in Chrome or Edge on a computer that plays HEVC video.</li>
+        <li>A long video takes a few minutes. Keep this page open and the screen on until it finishes.</li>
+        <li>When the pictures are ready you can have the page numbers checked, to see whether any pages are missing.</li>
+      </ul>
+    </section>
+
+    <section id="work" class="panel" hidden>
+      <h2>Working on <span id="filename" class="filename"></span></h2>
+      <p id="work-note" class="note" hidden></p>
+      <ol id="stages" class="stages"></ol>
+      <p id="elapsed" class="muted" aria-live="polite"></p>
+      <button id="stop" class="button">Stop</button>
+    </section>
+
+    <section id="problem" class="panel" hidden>
+      <h2>That did not work</h2>
+      <p id="problem-text"></p>
+      <button id="problem-again" class="button primary">Choose another video</button>
+    </section>
+
+    <section id="done" hidden>
+      <div class="panel summary">
+        <h2 id="done-title"></h2>
+        <p id="done-text"></p>
+        <div class="actions">
+          <button id="download" class="button primary">Download all (ZIP)</button>
+          <button id="again" class="button">Scan another video</button>
+        </div>
+        <p id="download-note" class="muted" hidden></p>
+        <div id="numbers" class="numbers">
+          <h3>Page numbers</h3>
+          <p id="numbers-text">Not checked yet. This page can read the printed page numbers to find pages that are missing and pictures that show the same pages twice. It downloads about 31 MB the first time and takes about a second per picture on a computer, longer on a phone.</p>
+          <div id="numbers-bar" class="progress" hidden><span></span></div>
+          <ul id="numbers-list" class="gaps" hidden></ul>
+          <div class="actions">
+            <button id="numbers-check" class="button">Check page numbers</button>
+            <button id="numbers-stop" class="button" hidden>Stop</button>
+          </div>
+        </div>
+        <div id="book" class="numbers">
+          <h3>The book as a PDF</h3>
+          <p id="book-text">Not made yet. This page can cut every picture into its two pages, flatten them, read their text and make a PDF of the book you can search and copy from. It downloads about 33 MB the first time and takes a few seconds per page on a computer, longer on a phone.</p>
+          <div id="book-bar" class="progress" hidden><span></span></div>
+          <div class="actions">
+            <button id="book-make" class="button">Make the PDF</button>
+            <button id="book-stop" class="button" hidden>Stop</button>
+            <button id="book-pdf" class="button primary" hidden>Download the PDF</button>
+            <button id="book-txt" class="button" hidden>Download the text</button>
+          </div>
+        </div>
+        <div class="filter" role="radiogroup" aria-label="Which pictures to show">
+          <label><input type="radio" name="show" value="all" checked> All pictures</label>
+          <label><input type="radio" name="show" value="marked"> Only those marked for a look</label>
+        </div>
+      </div>
+      <ul id="gallery" class="gallery"></ul>
+      <details class="panel details">
+        <summary>Technical details</summary>
+        <table id="timings"></table>
+      </details>
+    </section>
+  </main>
+
+  <dialog id="viewer" class="viewer" aria-label="Picture">
+    <div class="viewer-bar">
+      <span id="viewer-title"></span>
+      <span class="viewer-buttons">
+        <button id="viewer-prev" class="button small" aria-label="Previous picture">&larr;</button>
+        <button id="viewer-next" class="button small" aria-label="Next picture">&rarr;</button>
+        <a id="viewer-save" class="button small" download>Save</a>
+        <button id="viewer-close" class="button small" aria-label="Close">Close</button>
+      </span>
+    </div>
+    <div class="viewer-body"><img id="viewer-img" alt=""></div>
+    <p id="viewer-flags" class="viewer-flags"></p>
+  </dialog>
+
+  <footer class="wrap foot">
+    The video and the pictures never leave this device. No tracking, no accounts.
+  </footer>
+</body>
+</html>

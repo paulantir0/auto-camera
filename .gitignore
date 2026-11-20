@@ -1,0 +1,27 @@
+# Videos and the pictures made from them never go in git
+*.mov
+*.MOV
+*.m4v
+*.M4V
+*.mp4
+!docs/media/*.mp4
+output*/
+
+# Python
+.venv*/
+__pycache__/
+*.pyc
+*.log
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Working files: caches, the hand models, videos dropped into the web app
+data/
+
+# Notes and settings kept on the machine
+CLAUDE.md
+CLAUDE.local.md
+.claude/

@@ -1,0 +1,188 @@
+name: Build Windows EXE
+
+# Builds only for version tags and manual runs. In auto-camera-0 this also ran
+# on every push and pull request to main; that is off here so routine commits
+# do not spend Windows runner minutes.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # The hand models the pipeline was measured with (data/models on the
+  # development PC). Google's "latest" URLs could change what they serve; a
+  # different file stops the build here instead of changing the results.
+  HAND_LANDMARKER_SHA256: fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1
+  SKIN_SEGMENTER_SHA256: c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0
+
+jobs:
+  windows-exe:
+    name: Package AutoCameraBookScanner.exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install runtime and packaging dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Fetch FFmpeg (static GPL build from BtbN/FFmpeg-Builds)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The newest release branch build (ffmpeg-nX.Y-latest-win64-gpl-X.Y.zip); the master build only if there is none.
+          $names = (gh release view latest -R BtbN/FFmpeg-Builds --json assets | ConvertFrom-Json).assets.name
+          $pattern = '^ffmpeg-n(\d+)\.(\d+)-latest-win64-gpl-\d+\.\d+\.zip$'
+          $zip = $names | Where-Object { $_ -match $pattern } |
+            Sort-Object { [int]($_ -replace $pattern, '$1') }, { [int]($_ -replace $pattern, '$2') } | Select-Object -Last 1
+          if (-not $zip) { $zip = 'ffmpeg-master-latest-win64-gpl.zip' }
+          Write-Host "Using $zip"
+          New-Item -ItemType Directory -Force build-tools\download, build-tools\ffmpeg | Out-Null
+          gh release download latest -R BtbN/FFmpeg-Builds -p $zip -p checksums.sha256 -D build-tools\download --clobber
+          $expected = (Get-Content build-tools\download\checksums.sha256 | Where-Object { $_ -match [regex]::Escape($zip) + '$' }) -split '\s+' | Select-Object -First 1
+          $actual = (Get-FileHash build-tools\download\$zip -Algorithm SHA256).Hash.ToLower()
+          if (-not $expected -or $expected.ToLower() -ne $actual) { throw "checksum of $zip does not match ($actual vs $expected)" }
+          Expand-Archive build-tools\download\$zip -DestinationPath build-tools\download\unpacked -Force
+          $bin = Get-ChildItem build-tools\download\unpacked -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          Copy-Item $bin.FullName, (Join-Path $bin.DirectoryName 'ffprobe.exe') build-tools\ffmpeg\
+          # It runs, and has what the pipeline uses.
+          & build-tools\ffmpeg\ffmpeg.exe -hide_banner -version | Select-Object -First 1
+          & build-tools\ffmpeg\ffprobe.exe -hide_banner -version | Select-Object -First 1
+          if (-not (& build-tools\ffmpeg\ffmpeg.exe -hide_banner -encoders | Select-String 'libx264')) { throw 'ffmpeg has no libx264' }
+          if (-not (& build-tools\ffmpeg\ffmpeg.exe -hide_banner -hwaccels | Select-String '^cuda$')) { Write-Warning 'ffmpeg lists no cuda decoder: the app will always use the CPU' }
+          if (-not (& build-tools\ffmpeg\ffmpeg.exe -hide_banner -filters | Select-String 'scale_cuda')) { Write-Warning 'ffmpeg has no scale_cuda: the app will always use the CPU' }
+          Get-ChildItem build-tools\ffmpeg | Format-Table Name, Length
+
+      - name: Fetch the MediaPipe hand models
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force data\models | Out-Null
+          curl.exe -fsSL -o data\models\hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
+          curl.exe -fsSL -o data\models\selfie_multiclass_256x256.tflite https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite
+          $checks = @{ 'hand_landmarker.task' = $env:HAND_LANDMARKER_SHA256; 'selfie_multiclass_256x256.tflite' = $env:SKIN_SEGMENTER_SHA256 }
+          foreach ($name in $checks.Keys) {
+            $hash = (Get-FileHash "data\models\$name" -Algorithm SHA256).Hash.ToLower()
+            if ($hash -ne $checks[$name]) { throw "data\models\$name is not the model the pipeline was measured with ($hash)" }
+          }
+          Get-ChildItem data\models | Format-Table Name, Length
+
+      - name: Smoke test imports
+        shell: pwsh
+        run: |
+          python -m py_compile auto_camera_gui.py
+          python -c "import cv2, numpy, scipy, PIL, psutil, tkinter, tkinterdnd2; import auto_camera.pipeline, auto_camera.pages, auto_camera.book, auto_camera.desktop; from auto_camera import handdetect; mp = handdetect.import_mediapipe(); from mediapipe.tasks.python import BaseOptions, vision; assert hasattr(vision, 'HandLandmarker') and hasattr(vision, 'ImageSegmenter'); print('imports ok, mediapipe', mp.__version__)"
+
+      - name: Unit tests of the app's parts
+        shell: pwsh
+        run: python -m unittest tests.test_paths tests.test_handdetect tests.test_desktop -v
+
+      - name: Self-test from source
+        shell: pwsh
+        run: |
+          $env:PATH = "$PWD\build-tools\ffmpeg;$env:PATH"
+          python auto_camera_gui.py --self-test selftest-source.json
+          $code = $LASTEXITCODE
+          Get-Content selftest-source.json
+          if ($code -ne 0) { throw "self-test from source failed" }
+
+      - name: Build AutoCameraBookScanner.exe
+        shell: pwsh
+        run: |
+          python -m PyInstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --windowed `
+            --name AutoCameraBookScanner `
+            --collect-all mediapipe `
+            --collect-all cv2 `
+            --collect-all tkinterdnd2 `
+            --collect-submodules auto_camera `
+            --hidden-import webapp.jobs `
+            --copy-metadata mediapipe `
+            --copy-metadata numpy `
+            --copy-metadata opencv-contrib-python `
+            --copy-metadata psutil `
+            --copy-metadata scipy `
+            --add-data "data/models/hand_landmarker.task;models" `
+            --add-data "data/models/selfie_multiclass_256x256.tflite;models" `
+            --add-binary "build-tools/ffmpeg/ffmpeg.exe;ffmpeg" `
+            --add-binary "build-tools/ffmpeg/ffprobe.exe;ffmpeg" `
+            --exclude-module matplotlib `
+            --exclude-module pandas `
+            --exclude-module jax `
+            --exclude-module jaxlib `
+            --exclude-module sounddevice `
+            --exclude-module sentencepiece `
+            --exclude-module pytest `
+            --exclude-module IPython `
+            --hidden-import tkinter `
+            --hidden-import PIL._tkinter_finder `
+            auto_camera_gui.py
+          Get-Item dist\AutoCameraBookScanner.exe | Format-Table Name, Length
+
+      - name: Self-test of the built app
+        shell: pwsh
+        run: |
+          # Without FFmpeg on PATH, so that only the bundled copy can be used.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'ffmpeg.exe')) }) -join ';'
+          $run = Start-Process -FilePath dist\AutoCameraBookScanner.exe -ArgumentList '--self-test', "$PWD\selftest-exe.json" -Wait -PassThru
+          if (-not (Test-Path selftest-exe.json)) { throw "the app wrote no self-test report (exit code $($run.ExitCode))" }
+          Get-Content selftest-exe.json
+          $report = Get-Content selftest-exe.json | ConvertFrom-Json
+          if (-not $report.frozen) { throw 'the report is not from the built app' }
+          if ($report.found.ffmpeg -notmatch '_MEI') { throw "the app did not use its bundled ffmpeg: $($report.found.ffmpeg)" }
+          if ($run.ExitCode -ne 0 -or -not $report.ok) { throw "self-test of the built app failed (exit code $($run.ExitCode))" }
+
+      - name: Upload self-test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: self-test-reports
+          path: selftest-*.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stage release asset
+        shell: pwsh
+        run: |
+          Copy-Item dist\AutoCameraBookScanner.exe AutoCameraBookScanner-windows-x64.exe
+
+      - name: Upload workflow artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v6
+        with:
+          name: AutoCameraBookScanner-windows-x64-exe
+          path: AutoCameraBookScanner-windows-x64.exe
+          retention-days: 1
+
+      - name: Attach artifact to GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag AutoCameraBookScanner-windows-x64.exe --title $tag --notes "Windows build of Auto Camera Book Scanner: one picture per two-page spread, flat page images and a PDF from a video of a book. FFmpeg (GPL build from BtbN/FFmpeg-Builds) and Google's MediaPipe hand models are included."
+          } else {
+            gh release upload $tag AutoCameraBookScanner-windows-x64.exe --clobber
+          }
