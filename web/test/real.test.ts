@@ -160,8 +160,9 @@ for (const slug of slugs) {
   const grouped = groupSpreads(turns, a, hands, lightSums);
 
   test(`${name}: page turns and candidate frames`, () => {
-    const ref = fx.value<{ landings: number[]; confirmed: number[]; weak: boolean[] }>('turns');
+    const ref = fx.value<{ landings: number[]; confirmed: number[]; weak: boolean[]; settled?: number[] }>('turns');
     assert.deepEqual(turns.landings, ref.landings);
+    assert.deepEqual(turns.settled ?? turns.landings, ref.settled ?? ref.landings);
     assert.deepEqual(turns.confirmed, ref.confirmed);
     assert.deepEqual(turns.weak, ref.weak);
     const ours = grouped.map(s => { const c = toCandidate(s, a.fps) as unknown as Record<string, unknown>; delete c.review; return c; });

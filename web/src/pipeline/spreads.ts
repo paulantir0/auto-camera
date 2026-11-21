@@ -3,7 +3,7 @@
 
 import {
   CALM_MOTION, CALM_SLACK, CLEAR_MARGIN, FAR_APART, GRID_H, GRID_W, HAND_NEAR, HAND_STEP, HIDDEN_DROP, HIDDEN_GROUP, HIDDEN_LEVEL,
-  HIDDEN_PAPER, LAND_COVERAGE, LIFT_COVERAGE, LONG_INTERVAL, MIN_PRINT_CELLS, NEAR_MOTION, PAGE_HAND_STEP, SAME_SPREAD_CHANGED,
+  HIDDEN_PAPER, LAND_COVERAGE, LIFT_COVERAGE, LONG_INTERVAL, MIN_PRINT_CELLS, NEAR_MOTION, PAGE_HAND_STEP, SAME_FALL, SAME_SPREAD_CHANGED,
   SAME_SPREAD_SHARE, SHARP_ENOUGH, UNSETTLED, UNSETTLED_STEPS, WEAK_LAND_COVERAGE,
 } from './constants.ts';
 import { CELLS, cellMedian, findValleys, pageChanged, printCells, type Analysis } from './analysis.ts';
@@ -41,6 +41,8 @@ export interface Turns {
   weak: boolean[];
   coverLeft: Float32Array;
   coverRight: Float32Array;
+  /** per landing, the last full sweep of the same fall (one_landing_per_fall); absent: the landings themselves */
+  settled?: number[];
 }
 
 export interface Hands {
@@ -187,7 +189,31 @@ export function detectTurns(a: Analysis, landCoverage = LAND_COVERAGE): Turns {
       crossed = -1;
     }
   }
-  return rescueWeakLandings({ landings, confirmed, landingCover, weak: landings.map(() => false), coverLeft, coverRight }, rest);
+  const turns = rescueWeakLandings({ landings, confirmed, landingCover, weak: landings.map(() => false), coverLeft, coverRight }, rest);
+  return oneLandingPerFall(turns, a.leftMotion);
+}
+
+/**
+ * one_landing_per_fall: a leaf that slows down in the air is counted once. A full sweep that follows within
+ * SAME_FALL frames on a "rest" that was only a dip (the left page still moving) belongs to the same fall: the
+ * spread starts at the first sweep, `settled` records the last, and the frames between stay with that spread.
+ */
+export function oneLandingPerFall(t: Turns, leftMotion: ArrayLike<number>): Turns {
+  const count = t.landings.length;
+  const sameFall = t.landings.map((_, k) => k + 1 < count && leftMotion[t.confirmed[k]] >= CALM_MOTION && t.landings[k + 1] - t.confirmed[k] <= SAME_FALL);
+  if (!sameFall.some(Boolean)) return t;
+  const landings: number[] = [], confirmed: number[] = [], landingCover: number[] = [], weak: boolean[] = [], settled: number[] = [];
+  for (let first = 0; first < count;) {
+    let last = first;
+    while (sameFall[last]) last++;
+    landings.push(t.landings[first]);
+    settled.push(t.landings[last]);
+    confirmed.push(t.confirmed[last]);
+    landingCover.push(t.landingCover[last]);
+    weak.push(t.weak.slice(first, last + 1).some(Boolean));
+    first = last + 1;
+  }
+  return { landings, confirmed, landingCover, weak, coverLeft: t.coverLeft, coverRight: t.coverRight, settled };
 }
 
 /** rescue_weak_landings: a second look inside intervals far too long for one spread. */
@@ -255,6 +281,7 @@ export function groupSpreads(t: Turns, a: Analysis, hands: Hands | null, lightSu
   const ranked = net ? (hands?.netNear ?? net) : null;
   const onMap = useHands ? hands!.onMap ?? null : null;
   const starts = [0, ...t.landings];
+  const settles = [0, ...(t.settled ?? t.landings)];
   const covers = [0.0, ...t.landingCover];
   const weak = [false, ...t.weak];
   const spreads: Spread[] = [];
@@ -279,8 +306,9 @@ export function groupSpreads(t: Turns, a: Analysis, hands: Hands | null, lightSu
       window[k] = calm[k] ? quality[start + k] : -Infinity;
       windowMax = Math.max(windowMax, window[k]);
     }
-    let lift = start;
-    for (let frame = start + 1; frame <= end; frame++) {
+    // the right page is watched from where this spread's own leaf came down (the last sweep of its fall)
+    let lift = settles[position];
+    for (let frame = lift + 1; frame <= end; frame++) {
       if (t.coverRight[frame] >= liftCoverage) break;
       lift = frame;
     }

@@ -189,6 +189,11 @@ def one_page(features, centre_x: float, side: str):
     return [keys[i] for i in pick], (desc[pick] if len(pick) else None)
 
 
+def usual_keypoints(best: list[int], candidates: list[dict], pages: list) -> list[float]:
+    """How many keypoints each side usually has in this video when a spread is shown properly (its unflagged captures)."""
+    return [float(np.median([len(pages[position][side][0]) for position in best if not candidates[position].get("review")] or [0.0])) for side in (0, 1)]
+
+
 def drop_transitional(groups: list[list[int]], candidates: list[dict], pages: list,
                       *, threshold: int = HALF_PAGE_INLIERS, fixed: tuple[int, int] = (0, 0)) -> tuple[list[list[int]], list[tuple[int, str]]]:
     """Remove groups that are a disturbed view of a neighbouring spread, not a spread of their own.
@@ -200,28 +205,79 @@ def drop_transitional(groups: list[list[int]], candidates: list[dict], pages: li
     to rest are considered, so a spread that was properly shown is never
     dropped here. Returns the remaining groups and ``(candidate position,
     reason)`` for each dropped one.
+
+    Where the view before is one that never came to rest either, the two are
+    views of one page and the first is not the one to keep for being first: a
+    spread that is never at rest is often seen first with the leaf still
+    coming down or a hand across it, and then more calmly (Dale 16471, a hand
+    over the right page, was kept and 16485, at rest and clear, dropped as a
+    view of it). The later view takes the earlier one's place when it ranks
+    higher and shows all the earlier one does: see ``fuller_view``.
     """
     best = [max(group, key=lambda position: quality(candidates[position])) for group in groups]
     keep = [True] * len(groups)
     dropped: list[tuple[int, str]] = []
+    need = [max(threshold, 3 * fixed[index] + 6) for index in (0, 1)]
+    usual = usual_keypoints(best, candidates, pages)
+    sides = ("left", "right")
+    seen: dict[tuple[int, int, int], int] = {}
+
+    def agreeing(a: int, b: int, index: int) -> int:
+        if (a, b, index) not in seen:
+            seen[a, b, index] = agreeing_points(pages[a][index], pages[b][index])
+        return seen[a, b, index]
+
+    def shared(neighbour: int | None, position: int) -> int | None:
+        """The first side on which the two show the same page."""
+        if neighbour is None:
+            return None
+        return next((index for index in (0, 1) if agreeing(neighbour, position, index) >= need[index]), None)
+
+    def unsettled(position: int) -> bool:
+        return candidates[position]["best_motion"] > UNSETTLED_MOTION
+
+    def fuller_view(position: int, earlier: int, side: int) -> bool:
+        """Whether a later view that never came to rest should stand in place of an earlier one that shares its ``side`` page.
+
+        It has to rank higher, and the earlier view must have nothing it
+        lacks: the earlier view's other page is hidden (it holds under
+        ``LEGIBLE_USUAL`` of the keypoints that side usually has: a leaf in
+        the air, a hand), or the two agree on that page as well. Where the
+        earlier view shows another page in full that this one does not, this
+        one is a frame from the next turn and the earlier view is the record
+        of that page.
+        """
+        other = 1 - side
+        if quality(candidates[position]) <= quality(candidates[earlier]):
+            return False
+        hidden = len(pages[earlier][other][0]) < LEGIBLE_USUAL * usual[other]
+        return hidden or agreeing(earlier, position, other) >= max(PAGE_INLIERS, 3 * fixed[other] + 6)
+
     for number, position in enumerate(best):
-        if candidates[position]["best_motion"] <= UNSETTLED_MOTION:
+        if not unsettled(position):
             continue
-        before = next((best[k] for k in range(number - 1, -1, -1) if keep[k]), None)
+        kept_before = [k for k in range(number - 1, -1, -1) if keep[k]]
+        before = best[kept_before[0]] if kept_before else None
         # Only a neighbour that was properly shown can vouch that this frame is
         # a disturbed view of it. Judging against the next candidate whatever
         # its state dropped every view of a spread that was never at rest: each
         # one "matched the next", which was dropped in turn.
-        after = next((best[k] for k in range(number + 1, min(len(groups), number + 4))
-                      if candidates[best[k]]["best_motion"] <= UNSETTLED_MOTION), None)
+        after = next((best[k] for k in range(number + 1, min(len(groups), number + 4)) if not unsettled(best[k])), None)
         reason = None
-        for neighbour, name in ((before, "previous"), (after, "next")):
-            if neighbour is None or reason:
-                continue
-            for side, index in (("left", 0), ("right", 1)):
-                if agreeing_points(pages[neighbour][index], pages[position][index]) >= max(threshold, 3 * fixed[index] + 6):
-                    reason = f"{side} page matches the {name} spread"
-                    break
+        side = shared(before, position)
+        if side is not None:
+            reason = f"{sides[side]} page matches the previous spread"
+            if unsettled(before) and shared(after, position) is None and fuller_view(position, before, side):
+                # It must be a view in its own right once the earlier one is gone: not a disturbed view of the capture kept before that.
+                further = best[kept_before[1]] if len(kept_before) > 1 else None
+                if shared(further, position) is None:
+                    keep[kept_before[0]] = False
+                    dropped.extend((p, f"a better view of its {sides[side]} page follows") for p in groups[kept_before[0]])
+                    continue
+        else:
+            side = shared(after, position)
+            if side is not None:
+                reason = f"{sides[side]} page matches the next spread"
         if reason:
             keep[number] = False
             dropped.extend((p, reason) for p in groups[number])
@@ -260,7 +316,7 @@ def drop_shown_elsewhere(groups: list[list[int]], candidates: list[dict], pages:
     # dropped the only capture of pp. 50-51 (twice, with different frame
     # choices). Kept by this, a few more second views stay (IMG-0041 and
     # IMG-0042, about ten); a missing page is the worse fault.
-    usual = [float(np.median([len(pages[position][side][0]) for position, flag in zip(best, flagged) if not flag] or [0.0])) for side in (0, 1)]
+    usual = usual_keypoints(best, candidates, pages)
     for number, position in enumerate(best):
         # Only a capture that never came to rest. One that did, with a hand at
         # its edge, is a proper view of its spread: in Olson such a capture of

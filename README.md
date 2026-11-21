@@ -85,7 +85,9 @@ video.
 A turn ends with a leaf landing on the left page. Motion over the left page's
 print cells is accumulated; when 90% of them have been swept and the page next
 comes to rest, that is one landing, and a new spread begins. The level was
-measured: at 70% a hand pressing the page flat counted as a turn.
+measured: at 70% a hand pressing the page flat counted as a turn. A leaf that
+slows down in the air and sweeps the page a second time within three frames is
+still one landing.
 
 ![The landing signal over eleven seconds](docs/media/turns.png)
 
@@ -113,7 +115,9 @@ the book is in every frame of this spread, so only hand beyond that counts.*
 
 Two consecutive candidates are the same spread only when both pages match by
 keypoints. A frame caught mid-turn shares its left page with one spread and
-its right page with the next, which is how it is recognised and dropped.
+its right page with the next, which is how it is recognised and dropped. Of
+several views of a spread that never comes to rest, the best is kept, not the
+first.
 Captures with no paper in the page region (a cover, the empty stand) are
 trimmed from the start and the end.
 

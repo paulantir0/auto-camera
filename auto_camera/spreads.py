@@ -37,6 +37,7 @@ CALM_MOTION = 0.15           # page motion at or under this is "at rest"
 CALM_SLACK = 0.10            # when a spread is never at rest, frames this close to its calmest moment may be chosen
 WEAK_LAND_COVERAGE = 0.75    # a sweep this complete counts as a landing inside an interval that is far too long
 LONG_INTERVAL = 1.8          # ... that is, one at least this many times the video's usual interval
+SAME_FALL = 3                # frames: a left page swept again this soon after a "rest" that was only a slow-down is the same leaf, still coming down
 HIDDEN_LEVEL = 0.4           # a cell holds print in a spread when its calm frames show this share of the video's strong print detail there
 HIDDEN_DROP = 0.5            # and a frame hides that print when it shows under this share of it
 HIDDEN_GROUP = 4             # in at least this many cells side by side
@@ -106,6 +107,7 @@ class Turns:
     weak: list[bool]            # the landing was found on the second look (see ``rescue_weak_landings``)
     cover_left: np.ndarray      # (N,) share of the left page moved since the last confirmed landing
     cover_right: np.ndarray     # (N,) share of the right page moved since the last landing
+    settled: list[int] | None = None  # per landing, the last full sweep of the same fall (``one_landing_per_fall``); None: the landings themselves
 
 
 def detect_turns(analysis: Analysis, *, land_coverage: float = LAND_COVERAGE) -> Turns:
@@ -151,7 +153,54 @@ def detect_turns(analysis: Analysis, *, land_coverage: float = LAND_COVERAGE) ->
             landing_cover.append(float(cover_left[index]))
             swept_left[:] = False
             crossed = -1
-    return rescue_weak_landings(Turns(landings, confirmed, landing_cover, [False] * len(landings), cover_left, cover_right), rest_points)
+    turns = rescue_weak_landings(Turns(landings, confirmed, landing_cover, [False] * len(landings), cover_left, cover_right), rest_points)
+    return one_landing_per_fall(turns, analysis.left_motion)
+
+
+def one_landing_per_fall(turns: Turns, left_motion: np.ndarray) -> Turns:
+    """Count a leaf that slows down in the air once, not twice.
+
+    A landing is confirmed at the left page's next moment of rest, and
+    ``find_valleys`` also takes a clear dip between two bursts of motion for
+    one, so that a spread flipped past is not lost. A falling leaf dips like
+    that too: it slows for a frame halfway down. The landing was then
+    confirmed and the sweep cleared with the leaf still in the air, the rest
+    of the fall swept the left page a second time, and the few frames between
+    the two stood as a spread of their own in which nothing is still (Roberts,
+    frames 3155 to 3159: left-page motion 0.75, 0.42, 0.81, two hands and the
+    leaf in every frame). A second leaf cannot be lifted off the right page
+    and brought down on the left within ``SAME_FALL`` frames of the first, so
+    a full sweep that follows that soon on a "rest" that was only such a dip
+    belongs to the same fall, and the two are one landing.
+
+    The spread starts at the first sweep and ``settled`` records the last,
+    from where the right page is watched for the next leaf lifting. The
+    frames between the two stay with the spread they lead into: they are
+    chosen from like any others, which is to say only when the spread never
+    gets calmer than they are. Handing them to the spread before instead
+    (tried first) threw away the only clear view of a spread whose landing
+    was followed by a hand (IMG-0032, 2500 for 2508) and dropped frames that
+    had tied a mid-turn view to its spread (IMG-0037, 8849). A landing
+    confirmed with the left page at rest is left alone.
+    """
+    count = len(turns.landings)
+    same_fall = [k + 1 < count and left_motion[turns.confirmed[k]] >= CALM_MOTION and turns.landings[k + 1] - turns.confirmed[k] <= SAME_FALL
+                 for k in range(count)]
+    if not any(same_fall):
+        return turns
+    landings, confirmed, cover, weak, settled = [], [], [], [], []
+    first = 0
+    while first < count:
+        last = first
+        while same_fall[last]:
+            last += 1
+        landings.append(turns.landings[first])
+        settled.append(turns.landings[last])
+        confirmed.append(turns.confirmed[last])
+        cover.append(turns.landing_cover[last])
+        weak.append(any(turns.weak[first:last + 1]))
+        first = last + 1
+    return Turns(landings, confirmed, cover, weak, turns.cover_left, turns.cover_right, settled)
 
 
 def rescue_weak_landings(turns: Turns, rest_points: set[int]) -> Turns:
@@ -295,6 +344,7 @@ def group_spreads(turns: Turns, analysis: Analysis, hands=None, *, lift_coverage
     from .hands import fold_column
     fold_share = fold_column(analysis, analysis.grid_left.shape[1] * 100) / (analysis.grid_left.shape[1] * 100)
     starts = [0] + turns.landings
+    settles = [0] + (turns.settled if turns.settled is not None else turns.landings)
     covers = [0.0] + turns.landing_cover
     weak = [False] + turns.weak
     spreads: list[Spread] = []
@@ -310,8 +360,10 @@ def group_spreads(turns: Turns, analysis: Analysis, hands=None, *, lift_coverage
         moving = np.maximum(motion[start:end + 1], np.concatenate([motion[start + 1:end + 1], motion[end:end + 1]]))
         calm = moving <= max(CALM_MOTION, float(moving.min()) + CALM_SLACK)
         window = np.where(calm, window, -np.inf)
-        lift = start
-        for frame in range(start + 1, end + 1):
+        # The right page is watched from where this spread's own leaf came down: when it slowed in the air and swept the
+        # left page twice (``one_landing_per_fall``), that is the second sweep, where the right page's count was last cleared.
+        lift = settles[position]
+        for frame in range(lift + 1, end + 1):
             if turns.cover_right[frame] >= lift_coverage:
                 break
             lift = frame

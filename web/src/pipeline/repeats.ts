@@ -179,23 +179,56 @@ export function dropTransitional(groups: number[][], candidates: Candidate[], pa
   const best = groups.map(g => bestOf(g, candidates));
   const keep = groups.map(() => true);
   const dropped: [number, string][] = [];
+  const need = [Math.max(threshold, 3 * fixed[0] + 6), Math.max(threshold, 3 * fixed[1] + 6)];
+  const usual = usualKeypoints(best, candidates, pages);
+  const sides = ['left', 'right'];
+  const seen = new Map<string, number>();
+  const agreeing = (a: number, b: number, index: 0 | 1): number => {
+    const key = `${a},${b},${index}`;
+    let v = seen.get(key);
+    if (v === undefined) { v = agree(pages[a][index], pages[b][index]); seen.set(key, v); }
+    return v;
+  };
+  // the first side on which the two show the same page
+  const shared = (neighbour: number | null, position: number): 0 | 1 | null => {
+    if (neighbour === null) return null;
+    for (const index of [0, 1] as const) if (agreeing(neighbour, position, index) >= need[index]) return index;
+    return null;
+  };
+  const unsettled = (position: number) => candidates[position].best_motion > UNSETTLED_MOTION;
+  // fuller_view: a later view that never came to rest stands in place of an earlier one that shares its `side` page
+  // when it ranks higher and the earlier one has nothing it lacks (its other page hidden, or agreed on as well)
+  const fullerView = (position: number, earlier: number, side: 0 | 1): boolean => {
+    const other = (1 - side) as 0 | 1;
+    if (!better(quality(candidates[position]), quality(candidates[earlier]))) return false;
+    const hidden = pages[earlier][other].xs.length < LEGIBLE_USUAL * usual[other];
+    return hidden || agreeing(earlier, position, other) >= Math.max(PAGE_INLIERS, 3 * fixed[other] + 6);
+  };
   best.forEach((position, number) => {
-    if (candidates[position].best_motion <= UNSETTLED_MOTION) return;
-    let before: number | null = null;
-    for (let k = number - 1; k >= 0; k--) if (keep[k]) { before = best[k]; break; }
+    if (!unsettled(position)) return;
+    const keptBefore: number[] = [];
+    for (let k = number - 1; k >= 0; k--) if (keep[k]) keptBefore.push(k);
+    const before = keptBefore.length ? best[keptBefore[0]] : null;
     let after: number | null = null;
     for (let k = number + 1; k < Math.min(groups.length, number + 4); k++) {
-      if (candidates[best[k]].best_motion <= UNSETTLED_MOTION) { after = best[k]; break; }
+      if (!unsettled(best[k])) { after = best[k]; break; }
     }
     let reason: string | null = null;
-    for (const [neighbour, name] of [[before, 'previous'], [after, 'next']] as [number | null, string][]) {
-      if (neighbour === null || reason) continue;
-      for (const [side, index] of [['left', 0], ['right', 1]] as [string, 0 | 1][]) {
-        if (agree(pages[neighbour][index], pages[position][index]) >= Math.max(threshold, 3 * fixed[index] + 6)) {
-          reason = `${side} page matches the ${name} spread`;
-          break;
+    let side = shared(before, position);
+    if (side !== null) {
+      reason = `${sides[side]} page matches the previous spread`;
+      if (unsettled(before as number) && shared(after, position) === null && fullerView(position, before as number, side)) {
+        // it must be a view in its own right once the earlier one is gone
+        const further = keptBefore.length > 1 ? best[keptBefore[1]] : null;
+        if (shared(further, position) === null) {
+          keep[keptBefore[0]] = false;
+          for (const p of groups[keptBefore[0]]) dropped.push([p, `a better view of its ${sides[side]} page follows`]);
+          return;
         }
       }
+    } else {
+      side = shared(after, position);
+      if (side !== null) reason = `${sides[side]} page matches the next spread`;
     }
     if (reason) {
       keep[number] = false;
@@ -203,6 +236,15 @@ export function dropTransitional(groups: number[][], candidates: Candidate[], pa
     }
   });
   return [groups.filter((_, k) => keep[k]), dropped];
+}
+
+/** usual_keypoints: how many keypoints each side usually has in the video's unflagged captures. */
+export function usualKeypoints(best: number[], candidates: Candidate[], pages: Pages[]): [number, number] {
+  const of = (side: 0 | 1) => {
+    const counts = best.filter(p => !(candidates[p].review && candidates[p].review.length)).map(p => pages[p][side].xs.length);
+    return counts.length ? median(counts) : 0;
+  };
+  return [of(0), of(1)];
 }
 
 /** drop_shown_elsewhere: remove captures that never came to rest and in which everything legible is shown properly close by. */

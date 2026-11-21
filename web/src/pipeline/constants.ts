@@ -81,6 +81,7 @@ export const CALM_MOTION = 0.15;
 export const CALM_SLACK = 0.10;
 export const WEAK_LAND_COVERAGE = 0.75;
 export const LONG_INTERVAL = 1.8;
+export const SAME_FALL = 3;
 export const HIDDEN_LEVEL = 0.4;
 export const HIDDEN_DROP = 0.5;
 export const HIDDEN_GROUP = 4;

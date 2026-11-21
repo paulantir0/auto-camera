@@ -17,7 +17,8 @@ def synthetic(events: list[str], detail: dict[int, float] | None = None) -> Anal
     "." nothing moves, "R" the whole right page moves (leaf lifting), "L" the
     whole left page moves (leaf landing), "r" the outer third of the right page
     moves (a hand at the edge), "l" the lower half of the left page moves (a
-    hand pressing the page).
+    hand pressing the page), "s" its top quarter (a leaf that has slowed down
+    in the air).
     """
     count = len(events)
     moved = np.zeros((count, GRID_H, GRID_W), dtype=bool)
@@ -30,6 +31,8 @@ def synthetic(events: list[str], detail: dict[int, float] | None = None) -> Anal
             moved[index, 3:24, 38:44] = True
         elif event == "l":
             moved[index, 14:24, 4:22] = True
+        elif event == "s":
+            moved[index, 3:9, 4:22] = True
     page = LEFT | RIGHT
 
     def share(region: np.ndarray) -> np.ndarray:
@@ -84,6 +87,40 @@ class DetectTurnsTests(unittest.TestCase):
     def test_leaf_held_upright_then_landed_is_one_turn(self):
         events = list("....") + list("RR") + list("......") + list("LL") + list("....")
         self.assertEqual(len(detect_turns(synthetic(events)).landings), 1)
+
+    def test_a_leaf_that_slows_down_in_the_air_lands_once(self):
+        # The left page is swept, slows to a quarter for one frame and is swept again by the same leaf.
+        events = list("....") + list("RR") + list("LLL") + list("s") + list("LLLL") + list(".....")
+        analysis = synthetic(events)
+        self.assertIn(9, find_valleys(analysis.left_motion))  # the slow-down passes for a moment of rest
+        turns = detect_turns(analysis)
+        self.assertEqual(turns.landings, [6])   # one landing, from the first sweep
+        self.assertEqual(turns.settled, [10])   # and the leaf came down at the second
+        self.assertEqual(turns.confirmed, [14])
+
+    def test_the_frames_of_a_slowed_fall_stay_with_the_spread_they_lead_into(self):
+        # The spread never rests: its calmest and clearest frames come before the second sweep, and a hand after it.
+        events = list("....") + list("RR") + list("LLL") + list("sss") + list("LLLL") + list("llll") + list("RR") + list("LLL") + list(".....")
+        analysis = synthetic(events, detail={9: 60.0})
+        turns = detect_turns(analysis)
+        self.assertEqual((turns.landings, turns.settled), ([6, 22], [12, 22]))
+        spreads = group_spreads(turns, analysis)
+        self.assertEqual([(s.start, s.end) for s in spreads], [(0, 5), (6, 21), (22, len(events) - 1)])
+        self.assertEqual(spreads[1].best, 9)
+
+    def test_three_sweeps_of_one_fall_are_one_landing(self):
+        events = list("....") + list("RR") + list("LLL") + list("s") + list("LLL") + list("s") + list("LLLL") + list(".....")
+        turns = detect_turns(synthetic(events))
+        self.assertEqual((turns.landings, turns.settled), ([6], [14]))
+
+    def test_a_sweep_well_after_a_slow_down_is_a_landing_of_its_own(self):
+        # After the slow-down the lower half of the page moves for four frames before the next full sweep.
+        events = list("....") + list("RR") + list("LLL") + list("s") + list("llll") + list("LLLL") + list(".....")
+        self.assertEqual(detect_turns(synthetic(events)).landings, [6, 14])
+
+    def test_a_second_sweep_right_after_the_page_was_at_rest_is_kept(self):
+        events = list("....") + list("RR") + list("LLL") + list(".") + list("LLL") + list(".....")
+        self.assertEqual(detect_turns(synthetic(events)).landings, [6, 10])
 
 
 class GroupSpreadsTests(unittest.TestCase):
