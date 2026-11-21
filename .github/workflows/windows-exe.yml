@@ -1,8 +1,7 @@
 name: Build Windows EXE
 
-# Builds only for version tags and manual runs. In auto-camera-0 this also ran
-# on every push and pull request to main; that is off here so routine commits
-# do not spend Windows runner minutes.
+# Builds only for version tags and manual runs, so routine commits do not
+# spend Windows runner minutes.
 on:
   push:
     tags: ["v*"]

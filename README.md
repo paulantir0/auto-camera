@@ -180,8 +180,8 @@ development results each time.
 Python 3.12 and FFmpeg on the PATH.
 
 ```bash
-git clone https://github.com/paulantir0/auto-camera-production.git
-cd auto-camera-production
+git clone https://github.com/paulantir0/auto-camera.git
+cd auto-camera
 python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 
 # the two hand models, 8 and 16 MB, from Google's MediaPipe model storage
